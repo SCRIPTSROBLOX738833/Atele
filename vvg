@@ -34,7 +34,6 @@ local State = {
     ESPName = true,
     FastRespawn = false,
     AutoFling = false,
-    FlingAll = false,
 }
 
 local SETTINGS = {
@@ -97,7 +96,6 @@ local antiFlingConns = {}
 local MAX_LINEAR = 200
 local MAX_ANGULAR = 20
 local lastGoodSelf = nil
-local lastGoodSelfAt = 0
 
 local function saveOriginalCanCollide(character)
     if not originalCanCollide[character] then originalCanCollide[character] = {} end
@@ -169,14 +167,13 @@ local function disableAntiFling()
     originalCanCollide = {}
 end
 
--- Anti-fling guard (يحمي من الطيران)
+-- Anti-fling guard
 RunService.Heartbeat:Connect(function()
     if not antiFlingEnabled then return end
     if not canAct() then lastGoodSelf = nil return end
     local char, hrp = getChar()
     if not hrp then lastGoodSelf = nil return end
 
-    -- NaN check
     if hrp.Position.X ~= hrp.Position.X then
         if lastGoodSelf then hrp.CFrame = lastGoodSelf end
         hrp.AssemblyLinearVelocity = Vector3.zero
@@ -194,7 +191,6 @@ RunService.Heartbeat:Connect(function()
     end
 
     lastGoodSelf = hrp.CFrame
-    lastGoodSelfAt = tick()
 end)
 
 -- =====================================================
@@ -338,7 +334,6 @@ local function flingAllPlayers()
 end
 
 -- Auto fling
-local autoFlingConn = nil
 local lastAutoFlingTime = 0
 RunService.Heartbeat:Connect(function()
     if not State.AutoFling then return end
@@ -376,7 +371,6 @@ local function createESPForPlayer(p)
     local char = p.Character
     if not char then return end
 
-    -- Highlight
     local hl = highlights[p]
     if not hl or not hl.Parent or hl.Adornee ~= char then
         if hl then pcall(function() hl:Destroy() end) end
@@ -391,7 +385,6 @@ local function createESPForPlayer(p)
         highlights[p] = hl
     end
 
-    -- Name tag
     if State.ESPName then
         local head = char:FindFirstChild("Head")
         if head and not nameTags[p] then
@@ -447,7 +440,6 @@ local function cleanupESP()
     nameTags = {}
 end
 
--- Track players for ESP
 for _, p in pairs(Players:GetPlayers()) do
     if p ~= player then
         p.CharacterAdded:Connect(function()
@@ -465,7 +457,6 @@ Players.PlayerAdded:Connect(function(p)
 end)
 Players.PlayerRemoving:Connect(function(p) removeESPForPlayer(p) end)
 
--- Update loop
 RunService.Heartbeat:Connect(function()
     if State.ESP then updateAllESP() end
 end)
@@ -492,7 +483,7 @@ local Window = redzlib:MakeWindow({
     SaveFolder = "UniversalHubConfig"
 })
 
--- TAB 1: الرئيسية
+-- ========== TAB 1: الرئيسية ==========
 local MainTab = Window:MakeTab({"الرئيسية", "home"})
 
 MainTab:AddSection({"معلوماتك"})
@@ -502,16 +493,7 @@ MainTab:AddParagraph({"الـ ID", "🆔 " .. tostring(player.UserId)})
 MainTab:AddParagraph({"الحالة", "🟢 متصل"})
 MainTab:AddParagraph({"عدد اللاعبين", "👥 " .. #Players:GetPlayers()})
 
-task.spawn(function()
-    while true do
-        task.wait(2)
-        pcall(function()
-            -- تحديث عدد اللاعبين
-        end)
-    end
-end)
-
--- TAB 2: اللاعب
+-- ========== TAB 2: اللاعب ==========
 local PlayerTab = Window:MakeTab({"اللاعب", "user"})
 
 PlayerTab:AddSection({"الحركة"})
@@ -566,7 +548,7 @@ PlayerTab:AddButton({
     end
 })
 
--- TAB 3: مراقبة اللاعبين
+-- ========== TAB 3: مراقبة ==========
 local ESPTab = Window:MakeTab({"مراقبة", "eye"})
 
 ESPTab:AddSection({"إعدادات المراقبة"})
@@ -596,10 +578,8 @@ ESPTab:AddToggle({
     end
 })
 
--- قائمة اللاعبين
 ESPTab:AddSection({"اللاعبين المتصلين"})
 
-local playerList = {}
 local playerDropdown
 
 playerDropdown = ESPTab:AddDropdown({
@@ -623,13 +603,15 @@ ESPTab:AddButton({
                 table.insert(names, p.Name)
             end
         end
-        if #names == 0 then names = {"(مفيش لاعبين)")  end
+        if #names == 0 then
+            names = {"(مفيش لاعبين)"}
+        end
         playerDropdown:Set(names)
         notify("تحديث", "✅ " .. #names .. " لاعب")
     end
 })
 
--- TAB 4: فلنق
+-- ========== TAB 4: فلنق ==========
 local FlingTab = Window:MakeTab({"فلنق", "swords"})
 
 FlingTab:AddSection({"فلنق سريع"})
@@ -663,9 +645,13 @@ FlingTab:AddButton({
     Callback = function()
         local names = {}
         for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= player then table.insert(names, p.Name) end
+            if p ~= player then
+                table.insert(names, p.Name)
+            end
         end
-        if #names == 0 then names = {"(مفيش لاعبين)")  end
+        if #names == 0 then
+            names = {"(مفيش لاعبين)"}
+        end
         targetDropdown:Set(names)
         notify("تحديث", "✅ " .. #names .. " لاعب")
     end
@@ -675,12 +661,18 @@ FlingTab:AddButton({
     Name = "💥 طير اللاعب المحدد",
     Icon = "rbxassetid://10734923549",
     Callback = function()
-        if not selectedTarget then notify("فلنق", "⚠️ اختر لاعب أول") return end
+        if not selectedTarget then
+            notify("فلنق", "⚠️ اختر لاعب أول")
+            return
+        end
         local target = nil
         for _, p in ipairs(Players:GetPlayers()) do
             if p.Name == selectedTarget then target = p; break end
         end
-        if not target then notify("فلنق", "⚠️ اللاعب مش موجود") return end
+        if not target then
+            notify("فلنق", "⚠️ اللاعب مش موجود")
+            return
+        end
         task.spawn(function() flingTarget(target, 3) end)
     end
 })
@@ -700,7 +692,7 @@ FlingTab:AddSlider({
     Callback = function(v) SETTINGS.AutoFlingRadius = v end
 })
 
--- TAB 5: مضاد الفلنق
+-- ========== TAB 5: مضاد الفلنق ==========
 local AntiFlingTab = Window:MakeTab({"مضاد الفلنق", "shield"})
 
 AntiFlingTab:AddSection({"الحماية"})
@@ -742,7 +734,7 @@ AntiFlingTab:AddButton({
     end
 })
 
--- TAB 6: سكربتات
+-- ========== TAB 6: سكربتات ==========
 local ScriptsTab = Window:MakeTab({"سكربتات", "script"})
 
 ScriptsTab:AddSection({"سكربتات جاهزة"})
@@ -752,7 +744,7 @@ ScriptsTab:AddButton({
     Icon = "rbxassetid://10723374641",
     Callback = function()
         pcall(function()
-            loadstring(game:HttpGet("https://raw.githubusercontent.com/SCRIPTSROBLOS738833/Oiron-ahd-c-A-S/refs/heads/main/chat"))()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/SCRIPTSROBLOX738833/Oiron-ahd-c-A-S/refs/heads/main/chat"))()
         end)
         notify("سكربتات", "✅ تم تشغيل الشات")
     end
@@ -760,10 +752,10 @@ ScriptsTab:AddButton({
 
 ScriptsTab:AddSection({"سكربت مخصص"})
 
-ScriptsTab:AddInput({
+local customScriptInput = ScriptsTab:AddInput({
     Name = "رابط السكربت",
     Placeholder = "https://...",
-    ClearOnEnter = true,
+    ClearOnEnter = false,
     Callback = function(text, enterPressed)
         if enterPressed and text and text ~= "" then
             task.spawn(function()
@@ -784,12 +776,25 @@ ScriptsTab:AddButton({
     Name = "▶ تشغيل السكربت",
     Icon = "rbxassetid://10734923549",
     Callback = function()
-        -- هياخد الرابط من الـ input اللي فوق
-        notify("سكربت", "استخدم زر Enter في الـ input")
+        local url = redzlib.Flags["رابط السكربت"]
+        if not url or url == "" then
+            notify("سكربت", "⚠️ اكتب الرابط الأول")
+            return
+        end
+        task.spawn(function()
+            local ok, err = pcall(function()
+                loadstring(game:HttpGet(url))()
+            end)
+            if ok then
+                notify("سكربت", "✅ تم التشغيل")
+            else
+                notify("سكربت", "❌ فشل: " .. tostring(err))
+            end
+        end)
     end
 })
 
--- TAB 7: الإعدادات
+-- ========== TAB 7: الإعدادات ==========
 local SettingsTab = Window:MakeTab({"الإعدادات", "settings"})
 
 SettingsTab:AddSection({"حجم الواجهة"})
@@ -835,4 +840,4 @@ task.spawn(function()
     notify("Universal Hub", "✅ السكربت جاهز!")
 end)
 
-      print("[Universal Hub] ✅ Loaded") 
+print("[Universal Hub] ✅ Loaded")
