@@ -1,0 +1,838 @@
+-- =====================================================
+-- 🌐 Universal Script Hub
+-- Features: Fling, Anti-Fling, ESP, Chat Script, etc.
+-- =====================================================
+
+-- تحميل المكتبة
+local SCRIPT_URL = "https://raw.githubusercontent.com/SCRIPTSROBLOX738833/Oiron-ahd-c-A-S/refs/heads/main/SDRC"
+
+local success, redzlib = pcall(function()
+    return loadstring(game:HttpGet(SCRIPT_URL))()
+end)
+if not success or not redzlib then
+    warn("❌ فشل تحميل المكتبة")
+    return
+end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local Workspace = game:GetService("Workspace")
+
+local player = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- =====================================================
+-- 📊 STATE
+-- =====================================================
+local State = {
+    Noclip = false,
+    AntiFling = false,
+    ESP = false,
+    ESPName = true,
+    FastRespawn = false,
+    AutoFling = false,
+    FlingAll = false,
+}
+
+local SETTINGS = {
+    WalkSpeed = 16,
+    JumpPower = 50,
+    AutoFlingRadius = 15,
+    ESPColor = Color3.fromRGB(0, 255, 0),
+}
+
+-- =====================================================
+-- 🛠️ HELPERS
+-- =====================================================
+local function getChar()
+    local char = player.Character
+    if char and char:FindFirstChild("HumanoidRootPart") and char:FindFirstChild("Humanoid") then
+        return char, char.HumanoidRootPart, char.Humanoid
+    end
+    return nil
+end
+
+local function canAct()
+    local char = player.Character
+    if not char or not char.Parent then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    return char:FindFirstChild("HumanoidRootPart") ~= nil
+end
+
+local function notify(title, content)
+    pcall(function()
+        redzlib:MakeNotify({Title = title, Content = content, Duration = 5})
+    end)
+end
+
+-- =====================================================
+-- 👻 NOCLIP
+-- =====================================================
+local noclipConn = nil
+local function enableNoclip()
+    if noclipConn then noclipConn:Disconnect() end
+    noclipConn = RunService.Stepped:Connect(function()
+        local char = player.Character
+        if char then
+            for _, part in pairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then part.CanCollide = false end
+            end
+        end
+    end)
+end
+local function disableNoclip()
+    if noclipConn then noclipConn:Disconnect() noclipConn = nil end
+end
+
+-- =====================================================
+-- 🛡️ ANTI FLING
+-- =====================================================
+local antiFlingEnabled = false
+local originalCanCollide = {}
+local antiFlingConns = {}
+local MAX_LINEAR = 200
+local MAX_ANGULAR = 20
+local lastGoodSelf = nil
+local lastGoodSelfAt = 0
+
+local function saveOriginalCanCollide(character)
+    if not originalCanCollide[character] then originalCanCollide[character] = {} end
+    for _, part in ipairs(character:GetChildren()) do
+        if part:IsA("BasePart") then
+            if originalCanCollide[character][part] == nil then
+                originalCanCollide[character][part] = part.CanCollide
+            end
+        end
+    end
+end
+
+local function setupAntiFlingCharacter(character)
+    saveOriginalCanCollide(character)
+    local childAddedConn, steppedConn
+    for _, part in ipairs(character:GetChildren()) do
+        if antiFlingEnabled and part:IsA("BasePart") then part.CanCollide = false end
+    end
+    childAddedConn = character.ChildAdded:Connect(function(part)
+        if part:IsA("BasePart") then
+            if not originalCanCollide[character] then originalCanCollide[character] = {} end
+            if originalCanCollide[character][part] == nil then
+                originalCanCollide[character][part] = part.CanCollide
+            end
+            if antiFlingEnabled then part.CanCollide = false end
+        end
+    end)
+    steppedConn = RunService.Stepped:Connect(function()
+        if antiFlingEnabled and character:IsDescendantOf(Workspace) then
+            for _, part in ipairs(character:GetChildren()) do
+                if part:IsA("BasePart") and part.CanCollide then part.CanCollide = false end
+            end
+        end
+    end)
+    character.Destroying:Connect(function()
+        pcall(function() childAddedConn:Disconnect() end)
+        pcall(function() steppedConn:Disconnect() end)
+    end)
+end
+
+local function trackAntiFlingPlayer(p)
+    if p == player then return end
+    local conn = p.CharacterAdded:Connect(setupAntiFlingCharacter)
+    if p.Character then setupAntiFlingCharacter(p.Character) end
+    antiFlingConns[p] = conn
+end
+
+local function enableAntiFling()
+    if antiFlingEnabled then return end
+    antiFlingEnabled = true
+    for _, p in ipairs(Players:GetPlayers()) do trackAntiFlingPlayer(p) end
+    table.insert(antiFlingConns, Players.PlayerAdded:Connect(trackAntiFlingPlayer))
+    notify("مضاد الفلنق", "✅ اتفعّل")
+end
+
+local function disableAntiFling()
+    antiFlingEnabled = false
+    for p, conn in pairs(antiFlingConns) do
+        pcall(function() if conn.Connected then conn:Disconnect() end end)
+    end
+    antiFlingConns = {}
+    for character, parts in pairs(originalCanCollide) do
+        if character and character.Parent then
+            for part, origValue in pairs(parts) do
+                pcall(function() if part and part.Parent then part.CanCollide = origValue end end)
+            end
+        end
+    end
+    originalCanCollide = {}
+end
+
+-- Anti-fling guard (يحمي من الطيران)
+RunService.Heartbeat:Connect(function()
+    if not antiFlingEnabled then return end
+    if not canAct() then lastGoodSelf = nil return end
+    local char, hrp = getChar()
+    if not hrp then lastGoodSelf = nil return end
+
+    -- NaN check
+    if hrp.Position.X ~= hrp.Position.X then
+        if lastGoodSelf then hrp.CFrame = lastGoodSelf end
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        return
+    end
+
+    local lv = hrp.AssemblyLinearVelocity
+    if lv.Magnitude > MAX_LINEAR then
+        hrp.AssemblyLinearVelocity = lv.Unit * MAX_LINEAR
+    end
+    local av = hrp.AssemblyAngularVelocity
+    if av.Magnitude > MAX_ANGULAR then
+        hrp.AssemblyAngularVelocity = Vector3.zero
+    end
+
+    lastGoodSelf = hrp.CFrame
+    lastGoodSelfAt = tick()
+end)
+
+-- =====================================================
+-- 🌀 FLING
+-- =====================================================
+local flingActive = false
+
+local function flingTarget(targetPlayer, duration)
+    if not targetPlayer or not targetPlayer.Character then return false end
+    if flingActive then return false end
+
+    local targetChar = targetPlayer.Character
+    local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+    local targetHum = targetChar:FindFirstChild("Humanoid")
+    if not targetRoot or not targetHum or targetHum.Health <= 0 then return false end
+
+    local char, myRoot, myHum = getChar()
+    if not char or not myRoot or not myHum then return false end
+
+    flingActive = true
+    local flingStartChar = char
+    local flingStartRoot = myRoot
+    local OldPos = myRoot.CFrame
+    local savedFPDH = Workspace.FallenPartsDestroyHeight
+
+    pcall(function()
+        if targetChar:FindFirstChild("Head") then
+            Camera.CameraSubject = targetChar.Head
+        else
+            Camera.CameraSubject = targetHum
+        end
+    end)
+    pcall(function() myHum:SetStateEnabled(Enum.HumanoidStateType.Seated, false) end)
+    pcall(function() Workspace.FallenPartsDestroyHeight = 0/0 end)
+
+    local bv = Instance.new("BodyVelocity")
+    bv.Name = "Flinger"
+    bv.Parent = myRoot
+    bv.Velocity = Vector3.new(9e8, 9e8, 9e8)
+    bv.MaxForce = Vector3.new(1/0, 1/0, 1/0)
+
+    local function applyCFrame(targetPart, cframeOffset, cframeRotation)
+        if player.Character ~= flingStartChar then return end
+        if not flingStartRoot.Parent then return end
+        pcall(function()
+            local baseCF = CFrame.new(targetPart.Position)
+            flingStartRoot.CFrame = baseCF * cframeOffset * cframeRotation
+            flingStartChar:SetPrimaryPartCFrame(baseCF * cframeOffset * cframeRotation)
+            flingStartRoot.Velocity = Vector3.new(9e7, 9e8, 9e7)
+            flingStartRoot.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
+        end)
+    end
+
+    duration = duration or 3
+    local sum = 0
+    local startTime = tick()
+
+    pcall(function()
+        while (tick() - startTime) < duration do
+            task.wait()
+            if player.Character ~= flingStartChar then break end
+            if not flingStartRoot.Parent then break end
+            if not targetRoot.Parent then break end
+            if not targetHum.Parent or targetHum.Health <= 0 then break end
+
+            if targetRoot.Velocity.Magnitude < 50 then
+                sum = sum + 100
+                for _, item in ipairs({
+                    Vector3.new(0, 1.5, 0), Vector3.new(0, -1.5, 0),
+                    Vector3.new(2.25, 1.5, -2.25), Vector3.new(-2.25, -1.5, 2.25),
+                }) do
+                    applyCFrame(targetRoot,
+                        CFrame.new(item) + targetHum.MoveDirection * (targetRoot.Velocity.Magnitude / 1.25),
+                        CFrame.Angles(math.rad(sum), 0, 0))
+                    task.wait()
+                end
+            else
+                for _, item in ipairs({
+                    {Vector3.new(0, 1.5, targetHum.WalkSpeed), math.rad(90)},
+                    {Vector3.new(0, -1.5, -targetHum.WalkSpeed), 0},
+                    {Vector3.new(0, 1.5, targetHum.WalkSpeed), math.rad(90)},
+                }) do
+                    applyCFrame(targetRoot, CFrame.new(item[1]), CFrame.Angles(item[2], 0, 0))
+                    task.wait()
+                end
+            end
+            if myHum and myHum.Parent then myHum.Sit = false end
+        end
+    end)
+
+    pcall(function() if bv and bv.Parent then bv:Destroy() end end)
+    pcall(function() Workspace.FallenPartsDestroyHeight = savedFPDH end)
+
+    -- Cleanup
+    local cleanupStart = tick()
+    repeat
+        if player.Character ~= flingStartChar then break end
+        if not flingStartRoot or not flingStartRoot.Parent then break end
+        pcall(function()
+            flingStartRoot.CFrame = OldPos * CFrame.new(0, 0.5, 0)
+            flingStartChar:SetPrimaryPartCFrame(OldPos * CFrame.new(0, 0.5, 0))
+            local hum = flingStartChar:FindFirstChildOfClass("Humanoid")
+            if hum then hum:ChangeState("GettingUp") end
+            for _, p in ipairs(flingStartChar:GetChildren()) do
+                if p:IsA("BasePart") then p.Velocity = Vector3.zero; p.RotVelocity = Vector3.zero end
+            end
+        end)
+        task.wait()
+    until (tick() - cleanupStart > 2) or (flingStartRoot.Position - OldPos.Position).Magnitude < 25
+
+    pcall(function()
+        Camera.CameraSubject = player.Character and player.Character:FindFirstChild("Humanoid")
+    end)
+    flingActive = false
+    return true
+end
+
+local function flingAllPlayers()
+    task.spawn(function()
+        local list = {}
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= player and p.Character then
+                local eR = p.Character:FindFirstChild("HumanoidRootPart")
+                local eH = p.Character:FindFirstChild("Humanoid")
+                if eR and eH and eH.Health > 0 then
+                    table.insert(list, p)
+                end
+            end
+        end
+        if #list == 0 then notify("فلنق", "⚠️ مفيش لاعبين") return end
+        for _, p in ipairs(list) do
+            if p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                local h = p.Character:FindFirstChild("Humanoid")
+                if h and h.Health > 0 then
+                    pcall(flingTarget, p, 1.5)
+                    task.wait(0.3)
+                end
+            end
+        end
+    end)
+end
+
+-- Auto fling
+local autoFlingConn = nil
+local lastAutoFlingTime = 0
+RunService.Heartbeat:Connect(function()
+    if not State.AutoFling then return end
+    if flingActive then return end
+    if not canAct() then return end
+    local char, myRoot = getChar()
+    if not myRoot then return end
+    local now = tick()
+    if now - lastAutoFlingTime < 0.5 then return end
+
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= player and p.Character then
+            local eR = p.Character:FindFirstChild("HumanoidRootPart")
+            local eH = p.Character:FindFirstChild("Humanoid")
+            if eR and eH and eH.Health > 0 then
+                local dist = (eR.Position - myRoot.Position).Magnitude
+                if dist <= SETTINGS.AutoFlingRadius then
+                    lastAutoFlingTime = now
+                    task.spawn(function() pcall(flingTarget, p, 1.5) end)
+                    return
+                end
+            end
+        end
+    end
+end)
+
+-- =====================================================
+-- 👁️ ESP + MONITORING
+-- =====================================================
+local highlights = {}
+local nameTags = {}
+
+local function createESPForPlayer(p)
+    if p == player then return end
+    local char = p.Character
+    if not char then return end
+
+    -- Highlight
+    local hl = highlights[p]
+    if not hl or not hl.Parent or hl.Adornee ~= char then
+        if hl then pcall(function() hl:Destroy() end) end
+        hl = Instance.new("Highlight")
+        hl.FillColor = SETTINGS.ESPColor
+        hl.OutlineColor = SETTINGS.ESPColor
+        hl.FillTransparency = 0.5
+        hl.OutlineTransparency = 0
+        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        hl.Adornee = char
+        hl.Parent = char
+        highlights[p] = hl
+    end
+
+    -- Name tag
+    if State.ESPName then
+        local head = char:FindFirstChild("Head")
+        if head and not nameTags[p] then
+            local bb = Instance.new("BillboardGui")
+            bb.Name = "UniversalESPNameTag"
+            bb.Size = UDim2.new(0, 100, 0, 30)
+            bb.StudsOffset = Vector3.new(0, 3, 0)
+            bb.AlwaysOnTop = true
+            bb.Adornee = head
+            bb.Parent = head
+            local lbl = Instance.new("TextLabel")
+            lbl.Size = UDim2.new(1, 0, 1, 0)
+            lbl.BackgroundTransparency = 1
+            lbl.Text = p.Name
+            lbl.TextColor3 = SETTINGS.ESPColor
+            lbl.TextStrokeTransparency = 0
+            lbl.TextStrokeColor3 = Color3.new(0, 0, 0)
+            lbl.Font = Enum.Font.GothamBold
+            lbl.TextSize = 14
+            lbl.Parent = bb
+            nameTags[p] = bb
+        end
+    end
+end
+
+local function removeESPForPlayer(p)
+    if highlights[p] then
+        pcall(function() highlights[p]:Destroy() end)
+        highlights[p] = nil
+    end
+    if nameTags[p] then
+        pcall(function() nameTags[p]:Destroy() end)
+        nameTags[p] = nil
+    end
+end
+
+local function updateAllESP()
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= player then
+            if State.ESP then
+                createESPForPlayer(p)
+            else
+                removeESPForPlayer(p)
+            end
+        end
+    end
+end
+
+local function cleanupESP()
+    for p, hl in pairs(highlights) do pcall(function() hl:Destroy() end) end
+    for p, tag in pairs(nameTags) do pcall(function() tag:Destroy() end) end
+    highlights = {}
+    nameTags = {}
+end
+
+-- Track players for ESP
+for _, p in pairs(Players:GetPlayers()) do
+    if p ~= player then
+        p.CharacterAdded:Connect(function()
+            task.wait(0.5)
+            if State.ESP then createESPForPlayer(p) end
+        end)
+    end
+end
+
+Players.PlayerAdded:Connect(function(p)
+    p.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        if State.ESP then createESPForPlayer(p) end
+    end)
+end)
+Players.PlayerRemoving:Connect(function(p) removeESPForPlayer(p) end)
+
+-- Update loop
+RunService.Heartbeat:Connect(function()
+    if State.ESP then updateAllESP() end
+end)
+
+-- =====================================================
+-- ⚡ FAST RESPAWN
+-- =====================================================
+RunService.Heartbeat:Connect(function()
+    if not State.FastRespawn then return end
+    local char = player.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Health <= 0 then
+        pcall(function() player:LoadCharacter() end)
+    end
+end)
+
+-- =====================================================
+-- 🎨 UI
+-- =====================================================
+local Window = redzlib:MakeWindow({
+    Title = "Universal Hub",
+    SubTitle = "Roblox Script Hub",
+    SaveFolder = "UniversalHubConfig"
+})
+
+-- TAB 1: الرئيسية
+local MainTab = Window:MakeTab({"الرئيسية", "home"})
+
+MainTab:AddSection({"معلوماتك"})
+
+MainTab:AddParagraph({"اسم اللاعب", "👤 " .. player.Name})
+MainTab:AddParagraph({"الـ ID", "🆔 " .. tostring(player.UserId)})
+MainTab:AddParagraph({"الحالة", "🟢 متصل"})
+MainTab:AddParagraph({"عدد اللاعبين", "👥 " .. #Players:GetPlayers()})
+
+task.spawn(function()
+    while true do
+        task.wait(2)
+        pcall(function()
+            -- تحديث عدد اللاعبين
+        end)
+    end
+end)
+
+-- TAB 2: اللاعب
+local PlayerTab = Window:MakeTab({"اللاعب", "user"})
+
+PlayerTab:AddSection({"الحركة"})
+
+PlayerTab:AddSlider({
+    Name = "السرعة (WalkSpeed)",
+    Icon = "rbxassetid://10734984834",
+    Min = 1, Max = 200, Default = 16, Increase = 1,
+    Callback = function(v)
+        SETTINGS.WalkSpeed = v
+        local _, _, hum = getChar()
+        if hum then hum.WalkSpeed = v end
+    end
+})
+
+PlayerTab:AddSlider({
+    Name = "قوة القفز (JumpPower)",
+    Icon = "rbxassetid://10709768939",
+    Min = 10, Max = 300, Default = 50, Increase = 5,
+    Callback = function(v)
+        SETTINGS.JumpPower = v
+        local _, _, hum = getChar()
+        if hum then hum.JumpPower = v end
+    end
+})
+
+PlayerTab:AddSection({"مميزات"})
+
+PlayerTab:AddToggle({
+    Name = "اختراق الجدران (Noclip)",
+    Icon = "rbxassetid://10723396107",
+    Default = false,
+    Callback = function(v)
+        State.Noclip = v
+        if v then enableNoclip() else disableNoclip() end
+    end
+})
+
+PlayerTab:AddToggle({
+    Name = "إعادة الحياة بسرعة",
+    Icon = "rbxassetid://10723415766",
+    Default = false,
+    Callback = function(v) State.FastRespawn = v end
+})
+
+PlayerTab:AddButton({
+    Name = "إعادة تعيين الشخصية",
+    Icon = "rbxassetid://10734896206",
+    Callback = function()
+        pcall(function() player:LoadCharacter() end)
+        notify("اللاعب", "✅ تم إعادة التعيين")
+    end
+})
+
+-- TAB 3: مراقبة اللاعبين
+local ESPTab = Window:MakeTab({"مراقبة", "eye"})
+
+ESPTab:AddSection({"إعدادات المراقبة"})
+
+ESPTab:AddToggle({
+    Name = "تفعيل كشف اللاعبين (ESP)",
+    Icon = "rbxassetid://10723346959",
+    Default = false,
+    Callback = function(v)
+        State.ESP = v
+        if not v then cleanupESP() else updateAllESP() end
+    end
+})
+
+ESPTab:AddToggle({
+    Name = "عرض الأسماء",
+    Icon = "rbxassetid://10723415903",
+    Default = true,
+    Callback = function(v)
+        State.ESPName = v
+        if not v then
+            for p, tag in pairs(nameTags) do
+                pcall(function() tag:Destroy() end)
+            end
+            nameTags = {}
+        end
+    end
+})
+
+-- قائمة اللاعبين
+ESPTab:AddSection({"اللاعبين المتصلين"})
+
+local playerList = {}
+local playerDropdown
+
+playerDropdown = ESPTab:AddDropdown({
+    Name = "اختر لاعب",
+    Options = {"(اضغط تحديث)"},
+    Default = "(اضغط تحديث)",
+    Callback = function(v)
+        if v and v ~= "(اضغط تحديث)" then
+            notify("لاعب محدد", "تم اختيار: " .. v)
+        end
+    end
+})
+
+ESPTab:AddButton({
+    Name = "🔄 تحديث قائمة اللاعبين",
+    Icon = "rbxassetid://10709810463",
+    Callback = function()
+        local names = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= player then
+                table.insert(names, p.Name)
+            end
+        end
+        if #names == 0 then names = {"(مفيش لاعبين)")  end
+        playerDropdown:Set(names)
+        notify("تحديث", "✅ " .. #names .. " لاعب")
+    end
+})
+
+-- TAB 4: فلنق
+local FlingTab = Window:MakeTab({"فلنق", "swords"})
+
+FlingTab:AddSection({"فلنق سريع"})
+
+FlingTab:AddButton({
+    Name = "🌀 طير كل اللاعبين",
+    Icon = "rbxassetid://10734943902",
+    Callback = function() flingAllPlayers() end
+})
+
+FlingTab:AddSection({"فلنق لاعب محدد"})
+
+local selectedTarget = nil
+local targetDropdown
+
+targetDropdown = FlingTab:AddDropdown({
+    Name = "اختر اللاعب",
+    Options = {"(اضغط تحديث)"},
+    Default = "(اضغط تحديث)",
+    Callback = function(v)
+        if v and v ~= "(اضغط تحديث)" and v ~= "(مفيش لاعبين)" then
+            selectedTarget = tostring(v)
+        else
+            selectedTarget = nil
+        end
+    end
+})
+
+FlingTab:AddButton({
+    Name = "🔄 تحديث القائمة",
+    Callback = function()
+        local names = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= player then table.insert(names, p.Name) end
+        end
+        if #names == 0 then names = {"(مفيش لاعبين)")  end
+        targetDropdown:Set(names)
+        notify("تحديث", "✅ " .. #names .. " لاعب")
+    end
+})
+
+FlingTab:AddButton({
+    Name = "💥 طير اللاعب المحدد",
+    Icon = "rbxassetid://10734923549",
+    Callback = function()
+        if not selectedTarget then notify("فلنق", "⚠️ اختر لاعب أول") return end
+        local target = nil
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Name == selectedTarget then target = p; break end
+        end
+        if not target then notify("فلنق", "⚠️ اللاعب مش موجود") return end
+        task.spawn(function() flingTarget(target, 3) end)
+    end
+})
+
+FlingTab:AddSection({"Auto Fling"})
+
+FlingTab:AddToggle({
+    Name = "Auto Fling (يطير أي حد يقرب)",
+    Icon = "rbxassetid://10734943902",
+    Default = false,
+    Callback = function(v) State.AutoFling = v end
+})
+
+FlingTab:AddSlider({
+    Name = "نطاق Auto Fling",
+    Min = 5, Max = 50, Default = 15, Increase = 1,
+    Callback = function(v) SETTINGS.AutoFlingRadius = v end
+})
+
+-- TAB 5: مضاد الفلنق
+local AntiFlingTab = Window:MakeTab({"مضاد الفلنق", "shield"})
+
+AntiFlingTab:AddSection({"الحماية"})
+
+AntiFlingTab:AddToggle({
+    Name = "مضاد أن شخص يطيرك",
+    Icon = "rbxassetid://10723395457",
+    Default = false,
+    Description = "يمنع اللاعبين من طيرانك",
+    Callback = function(v)
+        State.AntiFling = v
+        if v then enableAntiFling() else disableAntiFling() end
+    end
+})
+
+AntiFlingTab:AddButton({
+    Name = "🔧 إصلاح عالق (Fix Freeze)",
+    Icon = "rbxassetid://10734896206",
+    Callback = function()
+        flingActive = false
+        pcall(function()
+            local c = player.Character
+            if c then
+                local hum = c:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    hum.PlatformStand = false
+                    hum.Sit = false
+                    pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+                end
+                for _, p in ipairs(c:GetDescendants()) do
+                    if p:IsA("BasePart") then
+                        p.Velocity = Vector3.zero
+                        p.RotVelocity = Vector3.zero
+                    end
+                end
+            end
+        end)
+        notify("إصلاح", "✅ تم الإصلاح")
+    end
+})
+
+-- TAB 6: سكربتات
+local ScriptsTab = Window:MakeTab({"سكربتات", "script"})
+
+ScriptsTab:AddSection({"سكربتات جاهزة"})
+
+ScriptsTab:AddButton({
+    Name = "شات (Chat)",
+    Icon = "rbxassetid://10723374641",
+    Callback = function()
+        pcall(function()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/SCRIPTSROBLOS738833/Oiron-ahd-c-A-S/refs/heads/main/chat"))()
+        end)
+        notify("سكربتات", "✅ تم تشغيل الشات")
+    end
+})
+
+ScriptsTab:AddSection({"سكربت مخصص"})
+
+ScriptsTab:AddInput({
+    Name = "رابط السكربت",
+    Placeholder = "https://...",
+    ClearOnEnter = true,
+    Callback = function(text, enterPressed)
+        if enterPressed and text and text ~= "" then
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet(text))()
+                end)
+                if ok then
+                    notify("سكربت", "✅ تم التشغيل")
+                else
+                    notify("سكربت", "❌ فشل: " .. tostring(err))
+                end
+            end)
+        end
+    end
+})
+
+ScriptsTab:AddButton({
+    Name = "▶ تشغيل السكربت",
+    Icon = "rbxassetid://10734923549",
+    Callback = function()
+        -- هياخد الرابط من الـ input اللي فوق
+        notify("سكربت", "استخدم زر Enter في الـ input")
+    end
+})
+
+-- TAB 7: الإعدادات
+local SettingsTab = Window:MakeTab({"الإعدادات", "settings"})
+
+SettingsTab:AddSection({"حجم الواجهة"})
+
+SettingsTab:AddDropdown({
+    Name = "حجم السكربت",
+    Options = {"صغير", "متوسط", "كبير", "كبير جداً"},
+    Default = "متوسط",
+    Callback = function(v)
+        pcall(function()
+            if v == "صغير" then redzlib:SetScale(0.75)
+            elseif v == "متوسط" then redzlib:SetScale(1)
+            elseif v == "كبير" then redzlib:SetScale(1.2)
+            elseif v == "كبير جداً" then redzlib:SetScale(1.4) end
+        end)
+    end
+})
+
+SettingsTab:AddSection({"عام"})
+
+SettingsTab:AddButton({
+    Name = "🗑️ حذف الإعدادات المحفوظة",
+    Callback = function()
+        pcall(function()
+            if delfile then delfile("UniversalHubConfig.json") end
+        end)
+        notify("الإعدادات", "🗑️ تم الحذف")
+    end
+})
+
+SettingsTab:AddButton({
+    Name = "ℹ️ معلومات",
+    Callback = function()
+        notify("Universal Hub", "الإصدار 1.0.0")
+    end
+})
+
+-- =====================================================
+-- 🚀 INIT
+-- =====================================================
+task.spawn(function()
+    task.wait(1.5)
+    notify("Universal Hub", "✅ السكربت جاهز!")
+end)
+
+      print("[Universal Hub] ✅ Loaded") 
